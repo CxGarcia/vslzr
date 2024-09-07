@@ -1,0 +1,21 @@
+{
+	"name": "vslz",
+	"module": "index.ts",
+	"type": "module",
+	"scripts": {
+		"dev": "bunx --bun vite"
+	},
+	"devDependencies": {
+		"@types/bun": "latest",
+		"vite": "^5.4.3"
+	},
+	"peerDependencies": {
+		"typescript": "^5.0.0"
+	},
+	"dependencies": {
+		"@types/three": "^0.168.0",
+		"alea": "^1.0.1",
+		"simplex-noise": "^4.0.3",
+		"three": "^0.168.0"
+	}
+}
