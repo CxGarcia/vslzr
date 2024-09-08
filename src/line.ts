@@ -1,6 +1,9 @@
+import { GUI } from "lil-gui";
 import { createNoise2D } from "simplex-noise";
 import * as THREE from "three";
 import type { AudioData, Vslzr } from "./types";
+
+const gui = new GUI();
 
 export class LineVisualization implements Vslzr {
 	private geometry: THREE.BufferGeometry;
@@ -8,45 +11,49 @@ export class LineVisualization implements Vslzr {
 	private positions: Float32Array;
 	private velocities: Float32Array;
 	private dampingFactors: Float32Array;
-	private numPoints: number;
-	private amplitude: number;
-	private damping: number;
-	private excitability: number;
-	private noise = createNoise2D();
+
+	private params = {
+		amplitude: 1,
+		numPoints: 100,
+		decay: 0.5,
+		damping: 0.1,
+		excitability: 0.1,
+		numShadowLines: 20,
+		shadowOpacity: 0.75,
+		colorRange: { min: "#141414", max: "#FB00FF" },
+		lineLength: 20,
+		tension: 300,
+		// wave speed = sqrt(tension / density)
+		waveSpeed: Math.sqrt(300 / 0.03),
+	};
+
 	private time: number;
-
+	private noise = createNoise2D();
 	private shadowLines: THREE.Line[] = [];
-	private numShadowLines: number;
-	private shadowOpacity: number;
 
-	// Guitar string parameters
-	private L: number; // Length of the string
-	private T: number; // Tension
-	private μ: number; // Linear density
-	private c: number; // Wave speed
+	constructor(private scene: THREE.Scene) {
+		const folder = gui.addFolder("Line vslzr");
 
-	constructor(
-		private scene: THREE.Scene,
-		numPoints = 100,
-		amplitude = 1,
-		decay = 0.5,
-		tension = 300, // Tension in N
-		damping = 0.1,
-		excitability = 0.1,
-		numShadowLines = 20,
-		shadowOpacity = 0.75,
-	) {
-		this.numPoints = numPoints;
-		this.amplitude = amplitude;
-		this.damping = damping;
-		this.excitability = excitability;
-		this.numShadowLines = numShadowLines;
-		this.shadowOpacity = shadowOpacity;
+		folder.add(this.params, "amplitude", 0, 2);
+		folder.add(this.params, "numPoints", 10, 1000, 1);
+		folder.add(this.params, "decay", 0, 1);
+		folder.add(this.params, "tension", 0, 1000);
+		folder.add(this.params, "damping", 0, 1);
+		folder.add(this.params, "excitability", 0, 1);
+		folder.add(this.params, "numShadowLines", 0, 100);
+		folder.add(this.params, "shadowOpacity", 0, 1);
+
+		folder.add(this.params, "lineLength", 0, 40);
+		folder.add(this.params, "waveSpeed", 0, 100);
+
+		folder.addColor(this.params.colorRange, "min").name("Color Range Min");
+		folder.addColor(this.params.colorRange, "max").name("Color Range Max");
+
 		this.shadowLines = [];
 
-		this.positions = new Float32Array(numPoints * 3);
-		this.velocities = new Float32Array(numPoints);
-		this.dampingFactors = new Float32Array(numPoints);
+		this.positions = new Float32Array(this.params.numPoints * 3);
+		this.velocities = new Float32Array(this.params.numPoints);
+		this.dampingFactors = new Float32Array(this.params.numPoints);
 		this.geometry = new THREE.BufferGeometry();
 		this.material = new THREE.LineBasicMaterial({
 			color: 0xffffff,
@@ -55,19 +62,15 @@ export class LineVisualization implements Vslzr {
 
 		this.time = 0;
 
-		// Initialize guitar string parameters
-		this.L = 20; // Length in visualization space
-		this.T = tension;
-		this.μ = 0.03; // Linear density in kg/m
-		this.c = Math.sqrt(this.T / this.μ); // Wave speed
-
 		this.initLine();
 		this.initShadowLines();
 	}
 
 	private initLine() {
-		for (let i = 0; i < this.numPoints; i++) {
-			const x = (i / (this.numPoints - 1)) * this.L - this.L / 2;
+		for (let i = 0; i < this.params.numPoints; i++) {
+			const x =
+				(i / (this.params.numPoints - 1)) * this.params.lineLength -
+				this.params.lineLength / 2;
 			this.positions[i * 3] = x;
 			this.positions[i * 3 + 1] = 0;
 			this.positions[i * 3 + 2] = 0;
@@ -75,7 +78,8 @@ export class LineVisualization implements Vslzr {
 
 			// Calculate damping factor based on distance from center
 			const distanceFromCenter = Math.abs(x);
-			const normalizedDistance = distanceFromCenter / (this.L / 2);
+			const normalizedDistance =
+				distanceFromCenter / (this.params.lineLength / 2);
 			this.dampingFactors[i] = Math.pow(normalizedDistance, 2); // Quadratic scaling
 		}
 
@@ -88,74 +92,143 @@ export class LineVisualization implements Vslzr {
 		this.scene.add(line);
 	}
 
-	update(audioData: AudioData, delta: number): void {
-		const { low, mid, high } = audioData;
+	public update(audioData: AudioData, delta: number): void {
 		this.time += delta;
-
-		const totalAmplitude = (low * 2 + mid * 0.01 + high * 0.25) / 3;
-		const maxAmplitude = 20; // Maximum amplitude in visualization space
-		const decayFactor = Math.exp(-delta / 1); // Decay over about 1 second
-
-		// Update line color based on frequencies
-		const r = Math.min(1, low * 2);
-		const g = Math.min(1, mid * 2);
-		const b = Math.min(1, high * 2);
-		this.material.color.setRGB(r, g, b);
-
-		// Update line thickness based on total amplitude
-		this.material.linewidth = 2 + totalAmplitude * 3;
-
-		for (let i = 0; i < this.numPoints; i++) {
-			const index = i * 3 + 1;
-			const x = this.positions[i * 3];
-
-			let displacement = 0;
-			const scaledAmplitude = totalAmplitude * maxAmplitude * this.amplitude;
-
-			for (let n = 1; n <= 5; n++) {
-				// Consider first 5 modes
-				const A_n = scaledAmplitude * Math.exp(-n * 0.5); // Amplitude decreases for higher modes
-				const omega_n = (n * Math.PI * this.c) / this.L;
-				displacement +=
-					A_n *
-					Math.sin((n * Math.PI * x) / this.L) *
-					Math.cos(omega_n * this.time);
-			}
-
-			// Add some noise for natural movement
-			const noiseForce =
-				this.noise(x * 0.5, this.time * 0.5) * this.excitability;
-
-			// Add direct influence from audio data
-			const audioForce = (low * 0.5 + mid * 0.3 + high * 0.2) * 2;
-
-			// Calculate total displacement
-			const totalDisplacement = displacement + noiseForce + audioForce;
-
-			// Apply tension force
-			const tensionForce = -this.positions[index] * (this.T / this.L);
-
-			// Update velocity and position using verlet integration
-			this.velocities[i] +=
-				(totalDisplacement + tensionForce - this.positions[index]) * delta;
-
-			const scaledDamping = this.damping + this.dampingFactors[i] * 0.9; // Adjust the 0.9 to control the strength of the edge damping
-			this.velocities[i] *= 1 - scaledDamping;
-
-			this.positions[index] += this.velocities[i];
-
-			// Apply decay
-			this.positions[index] *= decayFactor;
-		}
-
+		this.updateMaterialProperties(audioData);
+		this.updateLinePositions(audioData, delta);
 		this.updateShadowLines(audioData);
-
 		this.geometry.attributes.position.needsUpdate = true;
 	}
 
-	private updateShadowLines(audioData: AudioData) {
-		const { low, mid, high } = audioData;
+	private updateMaterialProperties(audioData: AudioData): void {
+		const totalAmplitude = this.calculateTotalAmplitude(audioData);
+		this.material.color.set(this.computeColor(audioData));
+		this.material.linewidth = 2 + totalAmplitude * 3;
+	}
 
+	private calculateTotalAmplitude(audioData: AudioData): number {
+		const { low, mid, high } = audioData;
+		return (low * 2 + mid * 0.01 + high * 0.25) / 3;
+	}
+
+	private updateLinePositions(audioData: AudioData, delta: number): void {
+		const totalAmplitude = this.calculateTotalAmplitude(audioData);
+		const maxAmplitude = 20;
+		const decayFactor = Math.exp(-delta / 1);
+
+		for (let i = 0; i < this.params.numPoints; i++) {
+			this.updateSinglePoint(
+				i,
+				totalAmplitude,
+				maxAmplitude,
+				audioData,
+				delta,
+				decayFactor,
+			);
+		}
+	}
+
+	private updateSinglePoint(
+		i: number,
+		totalAmplitude: number,
+		maxAmplitude: number,
+		audioData: AudioData,
+		delta: number,
+		decayFactor: number,
+	): void {
+		const index = i * 3 + 1;
+		const x = this.positions[i * 3];
+
+		const displacement = this.calculateDisplacement(
+			x,
+			totalAmplitude,
+			maxAmplitude,
+		);
+		const noiseForce = this.calculateNoiseForce(x);
+		const audioForce = this.calculateAudioForce(audioData);
+		const tensionForce = this.calculateTensionForce(this.positions[index]);
+
+		this.updateVelocityAndPosition(
+			i,
+			index,
+			displacement,
+			noiseForce,
+			audioForce,
+			tensionForce,
+			delta,
+			decayFactor,
+		);
+	}
+
+	private calculateDisplacement(
+		x: number,
+		totalAmplitude: number,
+		maxAmplitude: number,
+	): number {
+		let displacement = 0;
+		const scaledAmplitude =
+			totalAmplitude * maxAmplitude * this.params.amplitude;
+
+		for (let n = 1; n <= 5; n++) {
+			const A_n = scaledAmplitude * Math.exp(-n * 0.5);
+			const omega_n =
+				(n * Math.PI * this.params.waveSpeed) / this.params.lineLength;
+			displacement +=
+				A_n *
+				Math.sin((n * Math.PI * x) / this.params.lineLength) *
+				Math.cos(omega_n * this.time);
+		}
+
+		return displacement;
+	}
+
+	private calculateNoiseForce(x: number): number {
+		return this.noise(x * 0.5, this.time * 0.5) * this.params.excitability;
+	}
+
+	private calculateAudioForce(audioData: AudioData): number {
+		const { low, mid, high } = audioData;
+		return (low * 0.5 + mid * 0.3 + high * 0.2) * 2;
+	}
+
+	private calculateTensionForce(position: number): number {
+		return -position * (this.params.tension / this.params.lineLength);
+	}
+
+	private updateVelocityAndPosition(
+		i: number,
+		index: number,
+		displacement: number,
+		noiseForce: number,
+		audioForce: number,
+		tensionForce: number,
+		delta: number,
+		decayFactor: number,
+	): void {
+		const totalDisplacement = displacement + noiseForce + audioForce;
+
+		this.velocities[i] +=
+			(totalDisplacement + tensionForce - this.positions[index]) * delta;
+
+		const scaledDamping = this.params.damping + this.dampingFactors[i] * 0.9;
+		this.velocities[i] *= 1 - scaledDamping;
+
+		this.positions[index] += this.velocities[i];
+		this.positions[index] *= decayFactor;
+	}
+
+	private computeColor({ low, mid, high }: AudioData): THREE.Color {
+		const minColor = new THREE.Color(this.params.colorRange.min);
+		const maxColor = new THREE.Color(this.params.colorRange.max);
+
+		const intensity = (low + mid + high) / 3;
+
+		const t = Math.pow(intensity, 0.5);
+
+		return new THREE.Color().lerpColors(minColor, maxColor, t);
+	}
+
+	private updateShadowLines(audioData: AudioData) {
 		for (let i = this.shadowLines.length - 1; i > 0; i--) {
 			this.shadowLines[i].geometry.setAttribute(
 				"position",
@@ -167,19 +240,19 @@ export class LineVisualization implements Vslzr {
 			this.geometry.getAttribute("position").clone(),
 		);
 
-		// Update shadow line colors
-		const r = Math.min(1, low * 2);
-		const g = Math.min(1, mid * 2);
-		const b = Math.min(1, high * 2);
+		const color = this.computeColor(audioData);
+
 		this.shadowLines.forEach((line, index) => {
-			(line.material as THREE.LineBasicMaterial).color.setRGB(r, g, b);
-			(line.material as THREE.LineBasicMaterial).opacity =
-				this.shadowOpacity * (1 - index / this.numShadowLines);
+			const material = line.material as THREE.LineBasicMaterial;
+
+			material.color.set(color);
+			material.opacity =
+				this.params.shadowOpacity * (1 - index / this.params.numShadowLines);
 		});
 	}
 
 	private initShadowLines() {
-		for (let i = 0; i < this.numShadowLines; i++) {
+		for (let i = 0; i < this.params.numShadowLines; i++) {
 			const geometry = new THREE.BufferGeometry();
 			geometry.setAttribute(
 				"position",
@@ -188,7 +261,8 @@ export class LineVisualization implements Vslzr {
 
 			const material = new THREE.LineBasicMaterial({
 				color: this.material.color,
-				opacity: this.shadowOpacity * (1 - i / this.numShadowLines),
+				opacity:
+					this.params.shadowOpacity * (1 - i / this.params.numShadowLines),
 				transparent: true,
 			});
 
@@ -196,26 +270,5 @@ export class LineVisualization implements Vslzr {
 			this.shadowLines.push(shadowLine);
 			this.scene.add(shadowLine);
 		}
-	}
-
-	setAmplitude(amplitude: number): void {
-		this.amplitude = amplitude;
-	}
-
-	setDecay(decay: number): void {
-		this.decay = decay;
-	}
-
-	setExcitability(excitability: number): void {
-		this.excitability = excitability;
-	}
-
-	setTension(tension: number): void {
-		this.T = tension;
-		this.c = Math.sqrt(this.T / this.μ);
-	}
-
-	setDamping(damping: number): void {
-		this.damping = damping;
 	}
 }

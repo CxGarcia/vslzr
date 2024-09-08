@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import { frequencyRanges } from "./constants";
+import { LineVisualization } from "./line";
 import type { AudioData, Vslzr } from "./types";
 import { WaveLineVisualization } from "./wave";
 
@@ -15,7 +16,7 @@ class AudioVisualizer {
 	private audioContext: AudioContext;
 	private dataArray = new Uint8Array(0);
 
-	constructor(vslzr = WaveLineVisualization) {
+	constructor(vslzr = LineVisualization) {
 		this.scene = new THREE.Scene();
 		this.camera = this.initCamera();
 		this.renderer = this.initRenderer();
