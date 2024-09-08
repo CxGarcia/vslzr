@@ -64,29 +64,29 @@ export class BasicParticleSystem implements Vslzr {
 		const time = performance.now() * 0.001;
 
 		for (let i = 0; i < this.PARTICLE_COUNT; i++) {
+			const instance = this.particleInstances[i];
+
 			const index = i * 3;
-			this.particleInstances[i].update(
-				audioData,
-				this.CENTER_POSITION,
-				time,
-				delta,
-			);
+
+			instance.update(audioData, this.CENTER_POSITION, time, delta);
 
 			if (
-				!isNaN(this.particleInstances[i].position.x) &&
-				!isNaN(this.particleInstances[i].position.y) &&
-				!isNaN(this.particleInstances[i].position.z)
+				!Number.isNaN(instance.position.x) &&
+				!Number.isNaN(instance.position.y) &&
+				!Number.isNaN(instance.position.z)
 			) {
-				positions[index] = this.particleInstances[i].position.x;
-				positions[index + 1] = this.particleInstances[i].position.y;
-				positions[index + 2] = this.particleInstances[i].position.z;
-			} else {
-				console.warn(`Invalid position for particle ${i}`);
-				this.particleInstances[i].position.set(0, 0, 0);
-				positions[index] = 0;
-				positions[index + 1] = 0;
-				positions[index + 2] = 0;
+				positions[index] = instance.position.x;
+				positions[index + 1] = instance.position.y;
+				positions[index + 2] = instance.position.z;
+
+				return;
 			}
+
+			positions[index] = 0;
+			positions[index + 1] = 0;
+			positions[index + 2] = 0;
+
+			console.warn(`Invalid position for particle ${i}`);
 		}
 
 		this.particles.geometry.attributes.position.needsUpdate = true;
@@ -316,11 +316,12 @@ export class Particle {
 			);
 			const speed = this.baseSpeed * speedFactor;
 			return direction.normalize().multiplyScalar(speed);
-		} else {
-			// Gradual deceleration when near the center
-			const decelerationFactor =
-				Math.max(0, this.restThreshold - this.energy) / this.restThreshold;
-			return this.velocity.clone().multiplyScalar(-decelerationFactor);
 		}
+
+		// Gradual deceleration when near the center
+		const decelerationFactor =
+			Math.max(0, this.restThreshold - this.energy) / this.restThreshold;
+
+		return this.velocity.clone().multiplyScalar(-decelerationFactor);
 	}
 }

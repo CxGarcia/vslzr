@@ -1,137 +1,163 @@
 import * as THREE from "three";
-import { BasicParticleSystem } from "./particle";
-import type { Vslzr } from "./types";
-import { WaveLineVisualization } from "./wave-v2";
+import { frequencyRanges } from "./constants";
+import type { AudioData, Vslzr } from "./types";
+import { WaveLineVisualization } from "./wave";
 
-const delta = 1 / 60;
+class AudioVisualizer {
+	private delta = 1 / 60;
+	private vslzr: Vslzr;
+	private scene: THREE.Scene;
+	private camera: THREE.OrthographicCamera;
+	private renderer: THREE.WebGLRenderer;
 
-let scene: THREE.Scene;
-let camera: THREE.OrthographicCamera;
-let renderer: THREE.WebGLRenderer;
+	private sampleRate = 44100;
+	private analyser: AnalyserNode;
+	private audioContext: AudioContext;
+	private dataArray = new Uint8Array(0);
 
-let audioContext = new AudioContext();
-let analyser = audioContext.createAnalyser();
-let dataArray: Uint8Array = new Uint8Array(0);
+	constructor(vslzr = WaveLineVisualization) {
+		this.scene = new THREE.Scene();
+		this.camera = this.initCamera();
+		this.renderer = this.initRenderer();
+		this.audioContext = this.initAudio();
+		this.analyser = this.initAnalyser();
+		this.dataArray = new Uint8Array(this.analyser.frequencyBinCount);
+		this.vslzr = new vslzr(this.scene);
 
-let vslzr: Vslzr | null = null;
-
-(function init() {
-	scene = new THREE.Scene();
-
-	const aspect = window.innerWidth / window.innerHeight;
-	const frustumSize = 15; // Increased from 10 to accommodate larger boundary
-	camera = new THREE.OrthographicCamera(
-		(frustumSize * aspect) / -2,
-		(frustumSize * aspect) / 2,
-		frustumSize / 2,
-		frustumSize / -2,
-		0.1,
-		1000,
-	);
-	renderer = new THREE.WebGLRenderer({ antialias: true });
-	renderer.setSize(window.innerWidth, window.innerHeight);
-	renderer.setPixelRatio(window.devicePixelRatio);
-	document.body.appendChild(renderer.domElement);
-
-	vslzr = new WaveLineVisualization(scene);
-
-	initAudio();
-
-	camera.position.set(0, 0, 10);
-	camera.lookAt(0, 0, 0);
-
-	animate();
-})();
-
-function animate() {
-	requestAnimationFrame(animate);
-	if (!analyser || !dataArray || !vslzr) {
-		console.error("Analyser or dataArray not available");
-		return;
+		this.handleMicInput();
+		this.initWindowResizeListener();
 	}
 
-	analyser.getByteFrequencyData(dataArray);
-
-	const audioData = processAudioData(dataArray);
-
-	vslzr.update(audioData, delta);
-
-	renderer.render(scene, camera);
-}
-
-window.addEventListener("resize", () => {
-	// camera.aspect = window.innerWidth / window.innerHeight;
-	camera.updateProjectionMatrix();
-	renderer.setSize(window.innerWidth, window.innerHeight);
-});
-
-function handleAudioInput() {
-	if (!audioContext || !analyser) {
-		console.error("AudioContext not initialized");
-		return;
+	public start() {
+		this.animate();
 	}
 
-	navigator.mediaDevices
-		.getUserMedia({ audio: true })
-		.then((stream) => {
-			const source = audioContext.createMediaStreamSource(stream);
-			source.connect(analyser);
-		})
-		.catch((err) => {
-			console.error("Error accessing microphone:", err);
-		});
-}
+	private initCamera() {
+		const aspect = window.innerWidth / window.innerHeight;
+		const frustumSize = 15;
+		const cam = new THREE.OrthographicCamera(
+			(frustumSize * aspect) / -2,
+			(frustumSize * aspect) / 2,
+			frustumSize / 2,
+			frustumSize / -2,
+			0.1,
+			1000,
+		);
 
-function processAudioData(dataArray: Uint8Array): {
-	low: number;
-	mid: number;
-	high: number;
-} {
-	const lowEnd = Math.floor(dataArray.length / 3);
-	const midEnd = Math.floor((dataArray.length * 2) / 3);
+		cam.position.set(0, 0, 10);
+		cam.lookAt(0, 0, 0);
 
-	const lowSum = dataArray.slice(0, lowEnd).reduce((sum, val) => sum + val, 0);
-	const midSum = dataArray
-		.slice(lowEnd, midEnd)
-		.reduce((sum, val) => sum + val, 0);
-	const highSum = dataArray.slice(midEnd).reduce((sum, val) => sum + val, 0);
+		return cam;
+	}
 
-	// Normalize and amplify the values
-	const normalize = (sum: number, count: number) =>
-		Math.pow(sum / (count * 255), 2) * 10;
+	private initRenderer() {
+		const renderer = new THREE.WebGLRenderer({ antialias: true });
 
-	return {
-		low: normalize(lowSum, lowEnd),
-		mid: normalize(midSum, midEnd - lowEnd),
-		high: normalize(highSum, dataArray.length - midEnd),
-	};
-}
+		renderer.setSize(window.innerWidth, window.innerHeight);
+		renderer.setPixelRatio(window.devicePixelRatio);
 
-function initAudio() {
-	try {
-		audioContext = new (
-			window.AudioContext || (window as any).webkitAudioContext
+		document.body.appendChild(renderer.domElement);
+
+		return renderer;
+	}
+
+	private initAudio() {
+		const audioContext = new (
+			window.AudioContext || window.webkitAudioContext
 		)();
-		analyser = audioContext.createAnalyser();
-		analyser.fftSize = 256;
 
-		const bufferLength = analyser.frequencyBinCount;
-		dataArray = new Uint8Array(bufferLength);
-
-		// Resume the audio context if it's in a suspended state
 		if (audioContext.state === "suspended") {
 			audioContext.resume();
 		}
-	} catch (error) {
-		console.error("Failed to initialize audio context:", error);
+
+		return audioContext;
+	}
+
+	private initAnalyser() {
+		const analyser = this.audioContext.createAnalyser();
+		analyser.fftSize = 256;
+
+		return analyser;
+	}
+
+	private animate() {
+		requestAnimationFrame(this.animate.bind(this));
+
+		const audioData = this.processAudioData(this.dataArray);
+
+		this.vslzr.update(audioData, this.delta);
+		this.renderer.render(this.scene, this.camera);
+	}
+
+	private initWindowResizeListener() {
+		const cam = this.camera;
+		const renderer = this.renderer;
+
+		window.addEventListener("resize", () => {
+			cam.updateProjectionMatrix();
+			renderer.setSize(window.innerWidth, window.innerHeight);
+		});
+	}
+
+	private async handleMicInput() {
+		const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+		const source = this.audioContext.createMediaStreamSource(stream);
+		const track = stream.getAudioTracks()[0];
+		const settings = track.getSettings();
+
+		if (settings.sampleRate) {
+			this.sampleRate = settings.sampleRate;
+		}
+
+		source.connect(this.analyser);
+	}
+
+	private processAudioData(dataArray: Uint8Array): AudioData {
+		this.analyser.getByteFrequencyData(this.dataArray);
+
+		const binWidth = this.sampleRate / this.analyser.fftSize;
+
+		const getLowIndex = (freq: number) => Math.floor(freq / binWidth);
+
+		const lowSum = this.sumRange(
+			dataArray,
+			getLowIndex(frequencyRanges.lolo),
+			getLowIndex(frequencyRanges.lohi),
+		);
+		const midSum = this.sumRange(
+			dataArray,
+			getLowIndex(frequencyRanges.midlo),
+			getLowIndex(frequencyRanges.midhi),
+		);
+		const highSum = this.sumRange(
+			dataArray,
+			getLowIndex(frequencyRanges.hilo),
+			getLowIndex(frequencyRanges.hihi),
+		);
+
+		const normalize = (sum: number, count: number) =>
+			Math.pow(sum / (count * 255), 2) * 10;
+
+		return {
+			low: normalize(lowSum.sum, lowSum.count),
+			mid: normalize(midSum.sum, midSum.count),
+			high: normalize(highSum.sum, highSum.count),
+		};
+	}
+
+	private sumRange(
+		dataArray: Uint8Array,
+		start: number,
+		end: number,
+	): { sum: number; count: number } {
+		let sum = 0;
+		for (let i = start; i < end && i < dataArray.length; i++) {
+			sum += dataArray[i];
+		}
+		return { sum, count: end - start };
 	}
 }
 
-document.getElementById("startAudio")?.addEventListener("click", () => {
-	if (!audioContext) {
-		initAudio();
-	}
-	handleAudioInput();
-});
+const visualizer = new AudioVisualizer();
 
-document.getElementById("startAudio")?.click();
+visualizer.start();

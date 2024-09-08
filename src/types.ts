@@ -9,3 +9,9 @@ export interface AudioData {
 	mid: number;
 	high: number;
 }
+
+declare global {
+	interface Window {
+		webkitAudioContext: typeof AudioContext;
+	}
+}
