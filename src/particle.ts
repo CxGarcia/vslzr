@@ -2,26 +2,118 @@ import alea from "alea";
 import { createNoise3D } from "simplex-noise";
 import * as THREE from "three";
 import { boundary } from "./constants";
+import type { AudioData, Vslzr } from "./types";
+
+export class BasicParticleSystem implements Vslzr {
+	private particles: THREE.Points;
+	private particleInstances: Particle[] = [];
+
+	private readonly PARTICLE_COUNT = 5000;
+	private readonly CENTER_POSITION = new THREE.Vector3(0, 0, 0);
+
+	constructor(scene: THREE.Scene) {
+		const geometry = new THREE.BufferGeometry();
+		const positions = new Float32Array(this.PARTICLE_COUNT * 3);
+		const sizes = new Float32Array(this.PARTICLE_COUNT);
+		const colors = new Float32Array(this.PARTICLE_COUNT * 3);
+
+		for (let i = 0; i < this.PARTICLE_COUNT; i++) {
+			const angle = Math.random() * Math.PI * 2;
+			const radius = Math.random() * boundary;
+
+			const x = Math.cos(angle) * radius;
+			const y = Math.sin(angle) * radius;
+			const z = (Math.random() - 0.5) * (boundary / 2);
+
+			this.particleInstances.push(new Particle(x, y, z));
+
+			const index = i * 3;
+			positions[index] = x;
+			positions[index + 1] = y;
+			positions[index + 2] = z;
+
+			const color = new THREE.Color().setHSL(i / this.PARTICLE_COUNT, 1.0, 0.5);
+			colors[index] = color.r;
+			colors[index + 1] = color.g;
+			colors[index + 2] = color.b;
+		}
+
+		geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+		geometry.setAttribute("size", new THREE.BufferAttribute(sizes, 1));
+		geometry.setAttribute("color", new THREE.BufferAttribute(colors, 3));
+
+		geometry.computeBoundingSphere();
+
+		const material = new THREE.PointsMaterial({
+			size: 1,
+			vertexColors: true,
+			blending: THREE.NormalBlending,
+			transparent: true,
+			sizeAttenuation: false,
+		});
+
+		this.particles = new THREE.Points(geometry, material);
+
+		scene.add(this.particles);
+	}
+
+	update(audioData: AudioData, delta: number): void {
+		const positions = this.particles.geometry.attributes.position
+			.array as Float32Array;
+
+		const time = performance.now() * 0.001;
+
+		for (let i = 0; i < this.PARTICLE_COUNT; i++) {
+			const index = i * 3;
+			this.particleInstances[i].update(
+				audioData,
+				this.CENTER_POSITION,
+				time,
+				delta,
+			);
+
+			if (
+				!isNaN(this.particleInstances[i].position.x) &&
+				!isNaN(this.particleInstances[i].position.y) &&
+				!isNaN(this.particleInstances[i].position.z)
+			) {
+				positions[index] = this.particleInstances[i].position.x;
+				positions[index + 1] = this.particleInstances[i].position.y;
+				positions[index + 2] = this.particleInstances[i].position.z;
+			} else {
+				console.warn(`Invalid position for particle ${i}`);
+				this.particleInstances[i].position.set(0, 0, 0);
+				positions[index] = 0;
+				positions[index + 1] = 0;
+				positions[index + 2] = 0;
+			}
+		}
+
+		this.particles.geometry.attributes.position.needsUpdate = true;
+		this.particles.geometry.attributes.size.needsUpdate = true;
+		this.particles.geometry.computeBoundingSphere();
+	}
+}
 
 const computeAudioSensitivity = () => {
-  const sensitivity = {
-    low: 0.001,
-    mid: 0,
-    high: 0,
-  }
+	const sensitivity = {
+		low: 0.001,
+		mid: 0,
+		high: 0,
+	};
 
-  const preferenceFactor = Math.random();
+	const preferenceFactor = Math.random();
 
-  if (preferenceFactor < 0.33) {
-    sensitivity.low = Math.random() * 0.01;
-  } else if (preferenceFactor < 0.66) {
-   sensitivity.mid = Math.random() * 0.003;
-  } else {
-    sensitivity.high = Math.random() * 0.005;
-  }
+	if (preferenceFactor < 0.33) {
+		sensitivity.low = Math.random() * 0.01;
+	} else if (preferenceFactor < 0.66) {
+		sensitivity.mid = Math.random() * 0.003;
+	} else {
+		sensitivity.high = Math.random() * 0.005;
+	}
 
-  return sensitivity;
-}
+	return sensitivity;
+};
 
 export class Particle {
 	mass: number;
@@ -31,8 +123,8 @@ export class Particle {
 	acceleration: THREE.Vector3;
 	baseSpeed: number;
 
-	audioSensitivity: { low: number; mid: number; high: number };
-	audioHistory: { low: number; mid: number; high: number }[];
+	audioSensitivity: AudioData;
+	audioHistory: AudioData[];
 
 	energy: number;
 	restThreshold: number;
@@ -48,8 +140,6 @@ export class Particle {
 		this.baseSpeed = 5;
 		this.audioHistory = [];
 
-
-
 		this.audioSensitivity = computeAudioSensitivity();
 
 		this.energy = 0.1;
@@ -58,9 +148,8 @@ export class Particle {
 		this.minEnergy = 0.35;
 	}
 
-
 	update(
-		audioData: { low: number; mid: number; high: number },
+		audioData: AudioData,
 		centerPosition: THREE.Vector3,
 		time: number,
 		deltaTime: number,
@@ -91,7 +180,10 @@ export class Particle {
 	private updateEnergy(audioLevel: number, deltaTime: number): void {
 		const energyIncreaseRate = 0.1;
 		this.energy += audioLevel * energyIncreaseRate * deltaTime;
-		this.energy = Math.max(Math.min(this.energy, this.maxEnergy), this.minEnergy);
+		this.energy = Math.max(
+			Math.min(this.energy, this.maxEnergy),
+			this.minEnergy,
+		);
 	}
 
 	private applyNoise(time: number, audioLevel: number): void {
@@ -135,7 +227,7 @@ export class Particle {
 	}
 
 	private calculateAudioForce(
-		audioData: { low: number; mid: number; high: number },
+		audioData: AudioData,
 		centerPosition: THREE.Vector3,
 		time: number,
 	): THREE.Vector3 {
@@ -174,8 +266,6 @@ export class Particle {
 			Math.sin(time * 4 + this.position.z) * highForce,
 		);
 
-
-
 		// Bass explosion effect
 		const bassThreshold = 1;
 		if (avgAudio.low > bassThreshold) {
@@ -196,8 +286,7 @@ export class Particle {
 				this.noise(this.position.z, this.position.x, this.position.y),
 			);
 
-
-			const explosionStrength = bassForce * 15 * (avgAudio.low - bassThreshold);
+			const explosionStrength = bassForce * 5 * (avgAudio.low - bassThreshold);
 			const explosionForce =
 				explosionDirection.multiplyScalar(explosionStrength);
 
@@ -217,7 +306,7 @@ export class Particle {
 	private calculateCenterForce(centerPosition: THREE.Vector3): THREE.Vector3 {
 		const direction = centerPosition.clone().sub(this.position);
 		const distance = direction.length();
-		const maxDistance = boundary /2;
+		const maxDistance = boundary / 2;
 
 		// Movement towards center only when energy is above rest threshold
 		if (this.energy > this.restThreshold) {
