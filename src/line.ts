@@ -1,11 +1,9 @@
-import { GUI } from "lil-gui";
+import type { GUI } from "lil-gui";
 import { createNoise2D } from "simplex-noise";
 import * as THREE from "three";
 import type { AudioData, Vslzr } from "./types";
 
-const gui = new GUI();
-
-export class LineVisualization implements Vslzr {
+export class LineVslzr implements Vslzr {
 	private geometry: THREE.BufferGeometry;
 	private material: THREE.LineBasicMaterial;
 	private positions: Float32Array;
@@ -31,7 +29,10 @@ export class LineVisualization implements Vslzr {
 	private noise = createNoise2D();
 	private shadowLines: THREE.Line[] = [];
 
-	constructor(private scene: THREE.Scene) {
+	constructor(
+		private scene: THREE.Scene,
+		private gui: GUI,
+	) {
 		const folder = gui.addFolder("Line vslzr");
 
 		folder.add(this.params, "amplitude", 0, 2);
@@ -94,6 +95,7 @@ export class LineVisualization implements Vslzr {
 
 	public update(audioData: AudioData, delta: number): void {
 		this.time += delta;
+
 		this.updateMaterialProperties(audioData);
 		this.updateLinePositions(audioData, delta);
 		this.updateShadowLines(audioData);

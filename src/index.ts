@@ -1,164 +1,188 @@
+import GUI from "lil-gui";
 import * as THREE from "three";
 import { frequencyRanges } from "./constants";
-import { LineVisualization } from "./line";
+import { LineVslzr } from "./line";
 import type { AudioData, Vslzr } from "./types";
-import { WaveLineVisualization } from "./wave";
+import { WaveLineVslzr } from "./wave";
+
+type VslzrImpl = new (scene: THREE.Scene, gui: GUI) => Vslzr;
 
 class AudioVisualizer {
-	private delta = 1 / 60;
-	private vslzr: Vslzr;
-	private scene: THREE.Scene;
-	private camera: THREE.OrthographicCamera;
-	private renderer: THREE.WebGLRenderer;
+    private delta = 1 / 60;
+    private gui: GUI;
+    private vslzr: Vslzr;
+    private scene: THREE.Scene;
+    private camera: THREE.OrthographicCamera;
+    private renderer: THREE.WebGLRenderer;
 
-	private sampleRate = 44100;
-	private analyser: AnalyserNode;
-	private audioContext: AudioContext;
-	private dataArray = new Uint8Array(0);
+    private sampleRate = 44100;
+    private analyser: AnalyserNode;
+    private audioContext: AudioContext;
+    private dataArray: Uint8Array;
 
-	constructor(vslzr = LineVisualization) {
-		this.scene = new THREE.Scene();
-		this.camera = this.initCamera();
-		this.renderer = this.initRenderer();
-		this.audioContext = this.initAudio();
-		this.analyser = this.initAnalyser();
-		this.dataArray = new Uint8Array(this.analyser.frequencyBinCount);
-		this.vslzr = new vslzr(this.scene);
+    private smoothingFactor = 0.8;
+    private smoothedAudioData = { low: 0, mid: 0, high: 0 };
 
-		this.handleMicInput();
-		this.initWindowResizeListener();
-	}
 
-	public start() {
-		this.animate();
-	}
+    constructor(vslzr: VslzrImpl) {
+        this.gui = new GUI();
+        this.scene = new THREE.Scene();
+        this.camera = this.initCamera();
+        this.renderer = this.initRenderer();
+        this.audioContext = this.initAudio();
+        this.analyser = this.initAnalyser();
+        this.dataArray = new Uint8Array(this.analyser.frequencyBinCount);
+        this.vslzr = new vslzr(this.scene, this.gui);
 
-	private initCamera() {
-		const aspect = window.innerWidth / window.innerHeight;
-		const frustumSize = 15;
-		const cam = new THREE.OrthographicCamera(
-			(frustumSize * aspect) / -2,
-			(frustumSize * aspect) / 2,
-			frustumSize / 2,
-			frustumSize / -2,
-			0.1,
-			1000,
-		);
+        this.handleMicInput();
+        this.initWindowResizeListener();
+    }
 
-		cam.position.set(0, 0, 10);
-		cam.lookAt(0, 0, 0);
+    public start() {
+        this.animate();
+    }
 
-		return cam;
-	}
+    private initCamera() {
+        const aspect = window.innerWidth / window.innerHeight;
+        const frustumSize = 15;
+        const cam = new THREE.OrthographicCamera(
+            (frustumSize * aspect) / -2,
+            (frustumSize * aspect) / 2,
+            frustumSize / 2,
+            frustumSize / -2,
+            0.1,
+            1000,
+        );
 
-	private initRenderer() {
-		const renderer = new THREE.WebGLRenderer({ antialias: true });
+        cam.position.set(0, 0, 10);
+        cam.lookAt(0, 0, 0);
 
-		renderer.setSize(window.innerWidth, window.innerHeight);
-		renderer.setPixelRatio(window.devicePixelRatio);
+        return cam;
+    }
 
-		document.body.appendChild(renderer.domElement);
+    private initRenderer() {
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
 
-		return renderer;
-	}
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(window.devicePixelRatio);
 
-	private initAudio() {
-		const audioContext = new (
-			window.AudioContext || window.webkitAudioContext
-		)();
+        document.body.appendChild(renderer.domElement);
 
-		if (audioContext.state === "suspended") {
-			audioContext.resume();
-		}
+        return renderer;
+    }
 
-		return audioContext;
-	}
+    private initAudio() {
+        const audioContext = new (
+            window.AudioContext || window.webkitAudioContext
+        )();
 
-	private initAnalyser() {
-		const analyser = this.audioContext.createAnalyser();
-		analyser.fftSize = 256;
+        if (audioContext.state === "suspended") {
+            audioContext.resume();
+        }
 
-		return analyser;
-	}
+        return audioContext;
+    }
 
-	private animate() {
-		requestAnimationFrame(this.animate.bind(this));
+    private initAnalyser() {
+        const analyser = this.audioContext.createAnalyser();
+        analyser.fftSize = 2048; // Increased for better frequency resolution
+        analyser.smoothingTimeConstant = 0.85; // Add some built-in smoothing
 
-		const audioData = this.processAudioData(this.dataArray);
+        return analyser;
+    }
 
-		this.vslzr.update(audioData, this.delta);
-		this.renderer.render(this.scene, this.camera);
-	}
+    private animate() {
+        requestAnimationFrame(this.animate.bind(this));
 
-	private initWindowResizeListener() {
-		const cam = this.camera;
-		const renderer = this.renderer;
+        const audioData = this.processAudioData(this.dataArray);
 
-		window.addEventListener("resize", () => {
-			cam.updateProjectionMatrix();
-			renderer.setSize(window.innerWidth, window.innerHeight);
-		});
-	}
+        this.vslzr.update(audioData, this.delta);
+        this.renderer.render(this.scene, this.camera);
+    }
 
-	private async handleMicInput() {
-		const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-		const source = this.audioContext.createMediaStreamSource(stream);
-		const track = stream.getAudioTracks()[0];
-		const settings = track.getSettings();
+    private initWindowResizeListener() {
+        const cam = this.camera;
+        const renderer = this.renderer;
 
-		if (settings.sampleRate) {
-			this.sampleRate = settings.sampleRate;
-		}
+        window.addEventListener("resize", () => {
+            cam.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+    }
 
-		source.connect(this.analyser);
-	}
+    private async handleMicInput() {
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            const source = this.audioContext.createMediaStreamSource(stream);
+            const track = stream.getAudioTracks()[0];
+            const settings = track.getSettings();
 
-	private processAudioData(dataArray: Uint8Array): AudioData {
-		this.analyser.getByteFrequencyData(this.dataArray);
+            if (settings.sampleRate) {
+                this.sampleRate = settings.sampleRate;
+            }
 
-		const binWidth = this.sampleRate / this.analyser.fftSize;
+            source.connect(this.analyser);
+        } catch (error) {
+            console.error("Error accessing microphone:", error);
+        }
+    }
 
-		const getLowIndex = (freq: number) => Math.floor(freq / binWidth);
+    private processAudioData(dataArray: Uint8Array) {
+        this.analyser.getByteFrequencyData(this.dataArray);
 
-		const lowSum = this.sumRange(
-			dataArray,
-			getLowIndex(frequencyRanges.lolo),
-			getLowIndex(frequencyRanges.lohi),
-		);
-		const midSum = this.sumRange(
-			dataArray,
-			getLowIndex(frequencyRanges.midlo),
-			getLowIndex(frequencyRanges.midhi),
-		);
-		const highSum = this.sumRange(
-			dataArray,
-			getLowIndex(frequencyRanges.hilo),
-			getLowIndex(frequencyRanges.hihi),
-		);
+        const binWidth = this.sampleRate / this.analyser.fftSize;
 
-		const normalize = (sum: number, count: number) =>
-			Math.pow(sum / (count * 255), 2) * 10;
+        const getLowIndex = (freq: number) => Math.floor(freq / binWidth);
 
-		return {
-			low: normalize(lowSum.sum, lowSum.count),
-			mid: normalize(midSum.sum, midSum.count),
-			high: normalize(highSum.sum, highSum.count),
-		};
-	}
+        const lowSum = this.sumRange(
+            dataArray,
+            getLowIndex(frequencyRanges.lolo),
+            getLowIndex(frequencyRanges.lohi),
+        );
+        const midSum = this.sumRange(
+            dataArray,
+            getLowIndex(frequencyRanges.midlo),
+            getLowIndex(frequencyRanges.midhi),
+        );
+        const highSum = this.sumRange(
+            dataArray,
+            getLowIndex(frequencyRanges.hilo),
+            getLowIndex(frequencyRanges.hihi),
+        );
 
-	private sumRange(
-		dataArray: Uint8Array,
-		start: number,
-		end: number,
-	): { sum: number; count: number } {
-		let sum = 0;
-		for (let i = start; i < end && i < dataArray.length; i++) {
-			sum += dataArray[i];
-		}
-		return { sum, count: end - start };
-	}
+        const normalize = (sum: number, count: number) =>
+            Math.pow(sum / (count * 255), 1.5) * 5; // Adjusted normalization
+
+        const rawAudioData = {
+            low: normalize(lowSum.sum, lowSum.count),
+            mid: normalize(midSum.sum, midSum.count),
+            high: normalize(highSum.sum, highSum.count),
+        };
+
+        // Apply smoothing
+        this.smoothedAudioData = {
+            low: this.smooth(this.smoothedAudioData.low, rawAudioData.low),
+            mid: this.smooth(this.smoothedAudioData.mid, rawAudioData.mid),
+            high: this.smooth(this.smoothedAudioData.high, rawAudioData.high),
+        };
+
+        return this.smoothedAudioData;
+    }
+
+    private sumRange(dataArray: Uint8Array, start: number, end: number) {
+        let sum = 0;
+        for (let i = start; i < end && i < dataArray.length; i++) {
+            sum += dataArray[i];
+        }
+        return { sum, count: end - start };
+    }
+
+    private smooth(oldValue: number, newValue: number): number {
+        return this.smoothingFactor * oldValue + (1 - this.smoothingFactor) * newValue;
+    }
 }
 
-const visualizer = new AudioVisualizer();
+
+const visualizer = new AudioVisualizer(LineVslzr);
 
 visualizer.start();

@@ -1,30 +1,35 @@
-import { createNoise2D } from "simplex-noise";
+import type GUI from "lil-gui";
 import * as THREE from "three";
 import type { AudioData, Vslzr } from "./types";
 
-export class WaveLineVisualization implements Vslzr {
+export class WaveLineVslzr implements Vslzr {
 	private scene: THREE.Scene;
 	private geometry: THREE.BufferGeometry;
 	private positions: Float32Array;
-	private numPoints: number;
 	private time: number;
 	private harmonics: number[];
-	private waveSpeed: number;
 	private shadowLines: THREE.Line[];
-	private numShadowLines: number;
-	private shadowOpacityStep: number;
 
-	constructor(scene: THREE.Scene) {
+	private params = {
+		waveSpeed: 10,
+		numPoints: 250,
+		numShadowLines: 10,
+		shadowOpacityStep: 1 / (10 + 1),
+	};
+
+	constructor(scene: THREE.Scene, gui: GUI) {
 		this.time = 0;
 		this.scene = scene;
-		this.numPoints = 250;
-		this.positions = new Float32Array(this.numPoints * 3);
+		this.positions = new Float32Array(this.params.numPoints * 3);
 		this.harmonics = [1, 2, 3, 5, 8, 13, 21];
 
-		this.waveSpeed = 10;
+		const folder = gui.addFolder("Wave Line vslzr");
 
-		this.numShadowLines = 10;
-		this.shadowOpacityStep = 1 / (this.numShadowLines + 1);
+		folder.add(this.params, "waveSpeed", 0, 100);
+		folder.add(this.params, "numPoints", 10, 1000, 1);
+		folder.add(this.params, "numShadowLines", 0, 100);
+		folder.add(this.params, "shadowOpacityStep", 0, 1);
+
 		this.shadowLines = [];
 
 		this.geometry = this.createGeometry();
@@ -34,7 +39,7 @@ export class WaveLineVisualization implements Vslzr {
 	}
 
 	update(audioData: AudioData, delta: number) {
-		this.time += delta * this.waveSpeed;
+		this.time += delta * this.params.waveSpeed;
 
 		this.updateShadowLines();
 		this.updateLinePositions(audioData);
@@ -59,16 +64,19 @@ export class WaveLineVisualization implements Vslzr {
 	}
 
 	private createShadowLines() {
-		for (let i = 0; i < this.numShadowLines; i++) {
+		for (let i = 0; i < this.params.numShadowLines; i++) {
 			const geometry = new THREE.BufferGeometry();
 			geometry.setAttribute(
 				"position",
-				new THREE.BufferAttribute(new Float32Array(this.numPoints * 3), 3),
+				new THREE.BufferAttribute(
+					new Float32Array(this.params.numPoints * 3),
+					3,
+				),
 			);
 			const material = new THREE.LineBasicMaterial({
 				color: 0xffffff,
 				transparent: true,
-				opacity: 1 - (i + 1) * this.shadowOpacityStep,
+				opacity: 1 - (i + 1) * this.params.shadowOpacityStep,
 			});
 			const line = new THREE.Line(geometry, material);
 			this.shadowLines.push(line);
@@ -101,9 +109,9 @@ export class WaveLineVisualization implements Vslzr {
 		// Scale the dynamic amplitude to the max amplitude
 		const scaledAmplitude = dynamicAmplitude * maxAmplitude;
 
-		for (let i = 0; i < this.numPoints; i++) {
+		for (let i = 0; i < this.params.numPoints; i++) {
 			const x = this.calculateX(i);
-			const normalizedX = (i / (this.numPoints - 1)) * 2 - 1;
+			const normalizedX = (i / (this.params.numPoints - 1)) * 2 - 1;
 
 			// Use the same amplitude distribution as before
 			const amplitudeMultiplier = Math.pow(
@@ -124,12 +132,12 @@ export class WaveLineVisualization implements Vslzr {
 	}
 
 	private calculateX(index: number): number {
-		return (index / (this.numPoints - 1)) * 30 - 15;
+		return (index / (this.params.numPoints - 1)) * 30 - 15;
 	}
 
 	private calculateY(x: number, baseAmplitude: number): number {
 		let y = 0;
-		const phaseShift = this.time * this.waveSpeed;
+		const phaseShift = this.time * this.params.waveSpeed;
 
 		// Add harmonics with smoother transitions
 		for (let i = 0; i < this.harmonics.length; i++) {
@@ -156,12 +164,12 @@ export class WaveLineVisualization implements Vslzr {
 		const smoothingRadius = 2;
 		const edgeWeight = 0.9;
 
-		for (let i = 0; i < this.numPoints; i++) {
+		for (let i = 0; i < this.params.numPoints; i++) {
 			let sum = 0;
 			let weightSum = 0;
 
 			for (let j = -smoothingRadius; j <= smoothingRadius; j++) {
-				const index = Math.max(0, Math.min(this.numPoints - 1, i + j));
+				const index = Math.max(0, Math.min(this.params.numPoints - 1, i + j));
 				const distance = Math.abs(j);
 				const weight = 1 / (distance + 1);
 
@@ -171,7 +179,7 @@ export class WaveLineVisualization implements Vslzr {
 
 			const smoothedY = sum / weightSum;
 			const edgeFactor = Math.pow(
-				Math.sin((i / (this.numPoints - 1)) * Math.PI),
+				Math.sin((i / (this.params.numPoints - 1)) * Math.PI),
 				0.7,
 			);
 			this.positions[i * 3 + 1] =
